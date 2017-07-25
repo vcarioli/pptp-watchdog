@@ -5,7 +5,7 @@ import socket
 import sys
 
 DEFAULT_SERVER = 'localhost'
-DEFAULT_PORT = 5000  # The same port as used by the server
+DEFAULT_PORT = 55555  # The same port as used by the server
 
 
 def run(host, port):

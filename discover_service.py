@@ -1,29 +1,32 @@
 #!/usr/bin/env /usr/bin/python3
 # discover_service.py [port]
 
-import socket
-import sys
+from socket import socket, gethostname, AF_INET, SOCK_DGRAM
+from sys import argv
 
-DEFAULT_PORT = 5000 # The same port as used by the server
+MAGIC = "426e4973-a87c-46ca-b369-442e4cc50254"  # to make sure we don't confuse or get confused by other programs
 
-MAGIC = "fna349fn" # to make sure we don't confuse or get confused by other programs
+BROADCAST_PORT = 56765	# The same port as used by the server
 
-from socket import socket, AF_INET, SOCK_DGRAM
+
+def discover(port):
+	with socket(AF_INET, SOCK_DGRAM) as s:  # create UDP socket as s:
+		s.bind(('', BROADCAST_PORT))
+		data, addr = s.recvfrom(1024)  # wait for a packet
+		if str(data, 'utf-8').startswith(MAGIC):
+			# return (addr[0], int(data[len(MAGIC):]))
+			return str(data[len(MAGIC):], 'utf-8').split(':')
+
 
 def run(port):
-    with socket(AF_INET, SOCK_DGRAM) as s:  #create UDP socket as s:
-        s.bind(('', port))
-        
-        data, addr = s.recvfrom(1024) #wait for a packet
-        if str(data, 'utf-8').startswith(MAGIC):
-            print('Announcement: {} from {}'.format(str(data[len(MAGIC):], 'utf8'), addr[0]))
-            return
+	print('Service announcement received from {}:{}'.format(*discover(port)))
+
 
 if __name__ == "__main__":
-    try:
-        server_port = int(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_PORT
-    except:
-        print("Invalid port {}! Using default({})".format(sys.argv[1], DEFAULT_PORT))
-        server_port = DEFAULT_PORT
+	try:
+		broadcast_port = int(argv[1]) if len(argv) > 1 else BROADCAST_PORT
+	except:
+		print("Invalid port {}! Using default({})".format(argv[1], BROADCAST_PORT))
+		broadcast_port = BROADCAST_PORT
 
-    run(server_port)
+	run(broadcast_port)
