@@ -18,15 +18,17 @@ BUF_SIZE = 1024
 
 
 class AnnounceService(Thread):
-    def __init__(self, port, service_control):
+    def __init__(self, port, service_control, shutdown_flag):
         Thread.__init__(self)
         self.port = port
         self.service_control = service_control
+        self.shutdown_flag = shutdown_flag
 
-        self.shutdown_flag = Event()
+    def terminate(self):
+        return self.shutdown_flag.is_set() or not self.service_control['continue']
 
     def run(self):
-        while not self.shutdown_flag.is_set() and self.service_control['continue']:
+        while not self.terminate():
             with socket(AF_INET, SOCK_DGRAM) as s:  # create UDP socket as s:
                 s.bind(('', 0))
                 s.setsockopt(SOL_SOCKET, SO_BROADCAST, 1)  # this is a broadcast socket
@@ -36,74 +38,92 @@ class AnnounceService(Thread):
             sleep(3)
 
 
-# Service function for handling connections.
-def talk_service(client_sock, service_control):
-    client_sock.send(b'HELLO')  # Send message to connected client
-    data = str(client_sock.recv(BUF_SIZE), 'utf-8')  # Receiving from client
+class ListenerService(Thread):
+    def __init__(self, sock, host, port, service_control, shutdown_flag):
+        Thread.__init__(self)
+        self.sock = sock
+        self.host = host
+        self.port = port
+        self.service_control = service_control
+        self.shutdown_flag = shutdown_flag
 
-    cmd = 'ping -c 1 -w 2 -q pptp > /dev/null 2>&1'
-    try:
-        if not data or data == '.':
-            service_control['continue'] = False
-            data = 'Server stopping'
-        else:
-            data = "pptp {}pinging".format("not " if system(cmd) else "")
-    except:
-        pass
-    finally:
-        client_sock.sendall(data.encode('ascii'))
-        client_sock.close()
+    def terminate(self):
+        return self.shutdown_flag.is_set() or not self.service_control['continue']
 
+    # Service function for handling connections.
+    def talk_service(self):
+        self.client_sock.send(b'HELLO')  # Send message to connected client
+        data = str(self.client_sock.recv(BUF_SIZE), 'utf-8')  # Receiving from client
 
-def listener_service(s, service_control):
-    s.listen(5)  # Start listening on socket
-
-    # Keep talking with the client
-    while service_control['continue']:
+        cmd = 'ping -c 1 -w 2 -q pptp > /dev/null 2>&1'
         try:
+            if not data or data == '.':
+                self.service_control['continue'] = False
+                data = 'Server stopping'
+            else:
+                data = "pptp {}pinging".format("not " if system(cmd) else "")
+        except:
+            pass
+        finally:
+            self.client_sock.sendall(data.encode('ascii'))
+            self.client_sock.close()
+
+    def run(self):
+        self.sock.listen(5)
+        # Keep talking with the client
+        while not self.terminate():
             # blocking call - wait to accept a connection
-            client_sock, _ = s.accept()
+            self.client_sock, _ = self.sock.accept()
 
             # Someone connected - start talk_service thread
-            t = Thread(target=talk_service, args=(client_sock, service_control))
+            t = Thread(target=self.talk_service)
             t.start()
             t.join()
-        except:
-            return
+
+
+class ServiceExit(Exception):
+    """
+    Custom exception which is used to trigger the clean exit
+    of all running threads and the main program.
+    """
+    pass
 
 
 def sigint_handler(sig, frame):
-    exit(0)
+    raise ServiceExit
 
 
 def run(host, port):
-    signal(SIGINT, sigint_handler)
-
     service_control = {'continue': True}
+    shutdown_flag = Event()
 
-    announcer_thread = AnnounceService(port, service_control)
-    announcer_thread.start()
+    announcer_thread = AnnounceService(port, service_control, shutdown_flag)
 
-    with socket(AF_INET, SOCK_STREAM) as s:
+    with socket(AF_INET, SOCK_STREAM) as sock:
         try:
-            s.bind((host, port))
+            sock.bind((host, port))
         except Exception as ex:
             print('Bind failed. Error: {} - {}'.format(ex.errno, ex.strerror))
-            exit(1)
+            exit(0)
 
-        listener = Thread(target=listener_service, args=(s, service_control))
-        listener.start()
+        listener_thread = ListenerService(sock, host, port, service_control, shutdown_flag)
 
-        # main control loop
-        while True:
-            if not service_control['continue']:
-                announcer_thread.shutdown_flag.set()
-                return
+        try:
+            listener_thread.start()
+            announcer_thread.start()
 
-            # other controls
+            # main control loop
+            while not shutdown_flag.is_set():
+                if not service_control['continue']:
+                    shutdown_flag.set()
+                    raise ServiceExit
 
+                # other controls
+                continue
+
+        except ServiceExit:
             announcer_thread.join()
-            listener.join(1)
+            listener_thread.join()
 
 
 def get_ip():
@@ -136,6 +156,8 @@ if __name__ == "__main__":
 
     # find server IP
     ip = get_ip()
+
+    signal(SIGINT, sigint_handler)
 
     print('{} (IP: {}) starts listening on port {} (PID: {})'.format(gethostname(), ip, server_port, pid))
     run(HOST, server_port)
