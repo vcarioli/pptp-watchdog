@@ -17,38 +17,43 @@ DEFAULT_PORT = 55555  # Arbitrary non-privileged port
 BUF_SIZE = 1024
 
 
-class AnnounceService(Thread):
-    def __init__(self, port, service_control, shutdown_flag):
-        Thread.__init__(self)
+class ServiceExit(Exception):
+    """
+    Custom exception which is used to trigger the clean exit
+    of all running threads and the main program.
+    """
+    pass
+
+
+class ServiceBase(Thread):
+    def __init__(self, port, shutdown_flag, name):
+        Thread.__init__(self, name=name)
         self.port = port
-        self.service_control = service_control
         self.shutdown_flag = shutdown_flag
 
     def terminate(self):
-        return self.shutdown_flag.is_set() or not self.service_control['continue']
+        return self.shutdown_flag.is_set()
+
+
+class AnnounceService(ServiceBase):
+    def __init__(self, port, shutdown_flag):
+        ServiceBase.__init__(self, port, shutdown_flag, 'announce_service')
 
     def run(self):
         while not self.terminate():
             with socket(AF_INET, SOCK_DGRAM) as s:  # create UDP socket as s:
                 s.bind(('', 0))
                 s.setsockopt(SOL_SOCKET, SO_BROADCAST, 1)  # this is a broadcast socket
-                # data = '{}{}'.format(MAGIC, port).encode('ascii')
+                # data = '{}{}'.format(MAGIC, self.port).encode('ascii')
                 data = '{}{}:{}'.format(MAGIC, gethostname(), self.port).encode('ascii')
                 s.sendto(data, ('<broadcast>', BROADCAST_PORT))
             sleep(3)
 
 
-class ListenerService(Thread):
-    def __init__(self, sock, host, port, service_control, shutdown_flag):
-        Thread.__init__(self)
-        self.sock = sock
+class ListenerService(ServiceBase):
+    def __init__(self, host, port, shutdown_flag):
+        ServiceBase.__init__(self, port, shutdown_flag, 'listener_service')
         self.host = host
-        self.port = port
-        self.service_control = service_control
-        self.shutdown_flag = shutdown_flag
-
-    def terminate(self):
-        return self.shutdown_flag.is_set() or not self.service_control['continue']
 
     # Service function for handling connections.
     def talk_service(self):
@@ -58,35 +63,37 @@ class ListenerService(Thread):
         cmd = 'ping -c 1 -w 2 -q pptp > /dev/null 2>&1'
         try:
             if not data or data == '.':
-                self.service_control['continue'] = False
+                self.shutdown_flag.set()
                 data = 'Server stopping'
             else:
-                data = "pptp {}pinging".format("not " if system(cmd) else "")
+                data = 'pptp{}pinging'.format(' not ' if system(cmd) else ' ')
         except:
             pass
         finally:
             self.client_sock.sendall(data.encode('ascii'))
             self.client_sock.close()
 
+
     def run(self):
-        self.sock.listen(5)
-        # Keep talking with the client
-        while not self.terminate():
-            # blocking call - wait to accept a connection
-            self.client_sock, _ = self.sock.accept()
+        with socket(AF_INET, SOCK_STREAM) as s:
+            try:
+                s.bind((self.host, self.port))
+            except Exception as ex:
+                print('Bind failed. Error: {}'.format(ex))
+                self.shutdown_flag.set()  # raise ServiceExit
+                return
 
-            # Someone connected - start talk_service thread
-            t = Thread(target=self.talk_service)
-            t.start()
-            t.join()
+            s.listen(5)
 
+            # Keep talking with the client
+            while not self.terminate():
+                # blocking call - wait to accept a connection
+                self.client_sock, _ = s.accept()
 
-class ServiceExit(Exception):
-    """
-    Custom exception which is used to trigger the clean exit
-    of all running threads and the main program.
-    """
-    pass
+                # Someone connected - start talk_service thread
+                t = Thread(target=self.talk_service, name='talk_service')
+                t.start()
+                t.join()
 
 
 def sigint_handler(sig, frame):
@@ -94,36 +101,33 @@ def sigint_handler(sig, frame):
 
 
 def run(host, port):
-    service_control = {'continue': True}
     shutdown_flag = Event()
 
-    announcer_thread = AnnounceService(port, service_control, shutdown_flag)
+    terminate = lambda : shutdown_flag.is_set()
 
-    with socket(AF_INET, SOCK_STREAM) as sock:
-        try:
-            sock.bind((host, port))
-        except Exception as ex:
-            print('Bind failed. Error: {} - {}'.format(ex.errno, ex.strerror))
-            exit(0)
+    listener_thread = ListenerService(host, port, shutdown_flag)
+    announcer_thread = AnnounceService(port, shutdown_flag)
+    try:
+        listener_thread.start()
+        if not listener_thread.is_alive():
+            return
+        announcer_thread.start()
 
-        listener_thread = ListenerService(sock, host, port, service_control, shutdown_flag)
-
-        try:
-            listener_thread.start()
-            announcer_thread.start()
-
-            # main control loop
-            while not shutdown_flag.is_set():
-                if not service_control['continue']:
-                    shutdown_flag.set()
-                    raise ServiceExit
-
-                # other controls
-                continue
-
-        except ServiceExit:
-            announcer_thread.join()
-            listener_thread.join()
+        # main control loop
+        while not terminate():
+            # keep amin thread alive
+            sleep(3)
+    finally:
+        with socket(AF_INET, SOCK_STREAM) as s:
+            try:
+                s.connect((get_ip(), port))
+            except Exception:
+                print('Server {}:{} stopped!'.format(get_ip(), port))
+                exit(0)
+            else:
+                s.close()
+        announcer_thread.join(5)
+        listener_thread.join(5)
 
 
 def get_ip():
