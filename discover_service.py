@@ -1,7 +1,7 @@
 #!/usr/bin/env /usr/bin/python3
 # discover_service.py [port]
 
-from socket import socket, AF_INET, SOCK_DGRAM, timeout
+from socket import socket, AF_INET, SOCK_DGRAM, timeout as timeout_expired
 from sys import argv
 
 MAGIC = "426e4973-a87c-46ca-b369-442e4cc50254"  # to make sure we don't confuse or get confused by other programs
@@ -18,7 +18,7 @@ def discover(dgram_port):
             if str(data, 'utf-8').startswith(MAGIC):
                 rc = str(data[len(MAGIC):], 'utf-8').split(':')
                 return rc[0], rc[1], int(rc[2])
-        except timeout as ex:
+        except timeout_expired as ex:
             print('Connection attempt {}'.format(ex))
             return None, None, None
 
