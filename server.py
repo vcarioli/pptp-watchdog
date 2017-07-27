@@ -1,15 +1,14 @@
 #!/usr/bin/env /usr/bin/python3
 
+from os import system, fork, getpid
+from signal import signal, SIGINT
 from socket import socket, AF_INET, SOCK_STREAM, SOCK_DGRAM, SOL_SOCKET, SO_BROADCAST, gethostname
 from sys import argv, exit
 from threading import Thread, Event
-from os import system, fork, getpid
-from signal import signal, SIGINT
-
 from time import sleep
 
 MAGIC = "426e4973-a87c-46ca-b369-442e4cc50254"
-BROADCAST_PORT = 56765
+DGRAM_PORT = 56765
 
 HOST = ''  # Symbolic name meaning all available interfaces on localhost
 DEFAULT_PORT = 55555  # Arbitrary non-privileged port
@@ -44,9 +43,8 @@ class AnnounceService(ServiceBase):
             with socket(AF_INET, SOCK_DGRAM) as s:  # create UDP socket as s:
                 s.bind(('', 0))
                 s.setsockopt(SOL_SOCKET, SO_BROADCAST, 1)  # this is a broadcast socket
-                # data = '{}{}'.format(MAGIC, self.port).encode('ascii')
-                data = '{}{}:{}'.format(MAGIC, gethostname(), self.port).encode('ascii')
-                s.sendto(data, ('<broadcast>', BROADCAST_PORT))
+                data = '{}{}:{}:{}'.format(MAGIC, gethostname(), get_ip(), self.port).encode('ascii')
+                s.sendto(data, ('<broadcast>', DGRAM_PORT))
             sleep(3)
 
 

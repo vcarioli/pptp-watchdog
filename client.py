@@ -1,14 +1,14 @@
 #!/usr/bin/env /usr/bin/python3
 # client.py [host][:port]
 
-import socket
-import sys
+from socket import socket, AF_INET, SOCK_STREAM
+from sys import argv
 
 DEFAULT_SERVER = 'localhost'
 DEFAULT_PORT = 55555	# The same port as used by the server
 
 def run(host, port):
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+    with socket(AF_INET, SOCK_STREAM) as s:
         try:
             s.connect((host, port))
             hello = s.recv(1024)
@@ -19,13 +19,13 @@ def run(host, port):
             print(('Received: ' + data) if data else 'Server connection closed!')
         except Exception:
             print("{}:{} - Connection refused by server!".format(host, port))
-            sys.exit(1)
+            exit(1)
         else:
             s.close()
 
 if __name__ == "__main__":
     try:
-        args = sys.argv[1].split(':')
+        args = argv[1].split(':')
         server = str(args[0]) if len(args) > 0 and args[0] != '' else DEFAULT_SERVER
         try:
             server_port = int(args[1]) if len(args) > 1 else DEFAULT_PORT

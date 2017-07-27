@@ -1,11 +1,20 @@
 #!/usr/bin/env /usr/bin/python3
-# stopserver.py [host][:port]
+# dstopserver.py
 
-import socket
-import sys
+from socket import socket, AF_INET, SOCK_DGRAM
 
-DEFAULT_SERVER = 'localhost'
-DEFAULT_PORT = 55555  # The same port as used by the server
+MAGIC = "426e4973-a87c-46ca-b369-442e4cc50254"  # to make sure we don't confuse or get confused by other programs
+DGRAM_PORT = 56765  # The same port as used by the server
+
+
+def discover():
+    with socket(AF_INET, SOCK_DGRAM) as s:  # create UDP socket as s:
+        s.bind(('', DGRAM_PORT))
+        data, addr = s.recvfrom(1024)  # wait for a packet
+        if str(data, 'utf-8').startswith(MAGIC):
+            rc = str(data[len(MAGIC):], 'utf-8').split(':')
+            return rc[0], int(rc[1])
+
 
 
 def run(host, port):
