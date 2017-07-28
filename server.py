@@ -1,6 +1,7 @@
 #!/usr/bin/env /usr/bin/python3
 
-from os import system, fork, getpid
+from os import system, getpid, getuid
+from random import random
 from signal import signal, SIGINT
 from socket import socket, AF_INET, SOCK_STREAM, SOCK_DGRAM, SOL_SOCKET, SO_BROADCAST, gethostname
 from sys import argv, exit
@@ -14,6 +15,17 @@ HOST = ''  # Symbolic name meaning all available interfaces on localhost
 DEFAULT_PORT = 55555  # Arbitrary non-privileged port
 
 BUF_SIZE = 1024
+
+
+def get_ip():
+    ip = '127.0.0.1'
+    with socket(AF_INET, SOCK_DGRAM) as s:
+        try:
+            s.connect(('10.255.255.255', 1))
+            ip = s.getsockname()[0]
+        except:
+            pass
+    return ip
 
 
 class ServiceExit(Exception):
@@ -45,7 +57,7 @@ class AnnounceService(ServiceBase):
                 s.setsockopt(SOL_SOCKET, SO_BROADCAST, 1)  # this is a broadcast socket
                 data = '{}{}:{}:{}'.format(MAGIC, gethostname(), get_ip(), self.port).encode('ascii')
                 s.sendto(data, ('<broadcast>', DGRAM_PORT))
-            sleep(3)
+            sleep(random() * 2.5)
 
 
 class ListenerService(ServiceBase):
@@ -114,7 +126,7 @@ def run(host, port):
         # main control loop
         while not terminate():
             # keep amin thread alive
-            sleep(3)
+            sleep(random() * 3.0)
     finally:
         with socket(AF_INET, SOCK_STREAM) as s:
             try:
@@ -122,34 +134,18 @@ def run(host, port):
             except Exception:
                 print('Server {}:{} stopped!'.format(get_ip(), port))
                 exit(0)
-            else:
-                s.close()
+
         announcer_thread.join(5)
         listener_thread.join(5)
 
 
-def get_ip():
-    ip = '127.0.0.1'
-    with socket(AF_INET, SOCK_DGRAM) as s:
-        try:
-            s.connect(('10.255.255.255', 1))
-            ip = s.getsockname()[0]
-        except:
-            pass
-    return ip
-
-
 if __name__ == "__main__":
-    pid = fork()
-    if pid > 0:  # successfull fork(): parent process exits
-        exit(0)
-    elif pid < 0:  # unsuccessfull fork(): print error message (should never happen)
-        print('error: fork() returned {}'.format(pid))
-        exit(pid)
-    else:  # successfull fork(): get child's pid
-        pid = getpid()
+    from daemon import Daemon
 
+    PID_FILE = '/var/run/user/{}/pptp-server.pid'.format(getuid())
     server_port = DEFAULT_PORT
+    ip = get_ip()
+
     if len(argv) > 1:
         try:
             server_port = int(argv[1])
@@ -157,12 +153,43 @@ if __name__ == "__main__":
             print('{}: bad port. Using default ({})'.format(argv[1], server_port))
 
     # find server IP
-    ip = get_ip()
 
-    signal(SIGINT, sigint_handler)
+    class PPTPWatchdogDaemon(Daemon):
+        def __init__(self, host, port, pidfile):
+            Daemon.__init__(self, pidfile)
+            self.host = host
+            self.port = port
+            self.shutdown_flag = Event()
 
-    print('{} (IP: {}) starts listening on port {} (PID: {})'.format(gethostname(), ip, server_port, pid))
-    run(HOST, server_port)
-    print('Server {}:{} (IP: {}) dying.'.format(gethostname(), server_port, ip))
+        def run(self):
+            signal(SIGINT, sigint_handler)
 
+            terminate = lambda: self.shutdown_flag.is_set()
+
+            listener_thread = ListenerService(self.host, self.port, self.shutdown_flag)
+            announcer_thread = AnnounceService(self.port, self.shutdown_flag)
+            try:
+                listener_thread.start()
+                if not listener_thread.is_alive():
+                    return
+                announcer_thread.start()
+
+                # main control loop
+                while not terminate():
+                    # keep amin thread alive
+                    sleep(random() * 3.0)
+            finally:
+                with socket(AF_INET, SOCK_STREAM) as s:
+                    try:
+                        s.connect((get_ip(), self.port))
+                    except Exception:
+                        print('Server {}:{} stopped!'.format(get_ip(), self.port))
+                        exit(0)
+
+                announcer_thread.join(5)
+                listener_thread.join(5)
+
+
+    print('{} (IP: {}) starts listening on port {} (PID: {})'.format(gethostname(), ip, server_port, getpid()))
+    PPTPWatchdogDaemon(HOST, server_port, PID_FILE).start()
     exit(0)

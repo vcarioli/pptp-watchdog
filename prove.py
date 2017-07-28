@@ -26,11 +26,11 @@ def discover(dgram_port):
 
 
 class DiscoverService(Thread):
-    def __init__(self, dgram_port, time_out=10):
+    def __init__(self, dgram_port, servers, time_out=10):
         Thread.__init__(self, name='discover_service')
         self.dgram_port = dgram_port
         self.timeout = time_out
-        self.servers = dict()
+        self.servers = servers
 
     def discover(self):
         with socket(AF_INET, SOCK_DGRAM) as s:  # create UDP socket as s:
@@ -52,17 +52,22 @@ class DiscoverService(Thread):
             self.servers[ip] = [host, ip, port]
 
 
-def run(dgram_port):
+def run(dgram_port, servers):
+    from random import random
+    c = 0
+    keys = servers.keys
     while True:
-        discover_thread = DiscoverService(dgram_port)
-        c = len(discover_thread.servers.keys())
+        discover_thread = DiscoverService(dgram_port, servers=servers)
         discover_thread.start()
+        if c != len(keys()):
+            c = len(keys())
+            print()
+            for k in keys():
+                print('host: {}, IP: {}, port: {}'.format(*servers[k]))
+        else:
+            print('.', end='', flush=True)
         discover_thread.join()
-        if c != len(discover_thread.servers.keys()):
-            c = len(discover_thread.servers.keys())
-            for k in discover_thread.servers.keys():
-                print('host: {}, IP: {}, port: {}'.format(*discover_thread.servers[k]))
-        sleep(3)
+        sleep(random() * 3)
 
 
 if __name__ == "__main__":
@@ -72,4 +77,6 @@ if __name__ == "__main__":
         print("Invalid port {}! Using default({})".format(argv[1], DGRAM_PORT))
         dgram_port = DGRAM_PORT
 
-    run(dgram_port)
+    servers = dict()
+
+    run(dgram_port, servers)
