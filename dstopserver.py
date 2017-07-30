@@ -1,14 +1,14 @@
 #!/usr/bin/env /usr/bin/python3
 # dstopserver.py [host][:port]
 
-from socket import socket, AF_INET, SOCK_STREAM, SOCK_DGRAM, timeout
+import socket
 
 MAGIC = "426e4973-a87c-46ca-b369-442e4cc50254"  # to make sure we don't confuse or get confused by other programs
 DGRAM_PORT = 56765  # The same port as used by the server
 
 
 def discover(dgram_port):
-    with socket(AF_INET, SOCK_DGRAM) as s:  # create UDP socket as s:
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:  # create UDP socket as s:
         s.settimeout(10)
         s.bind(('', dgram_port))
         try:
@@ -16,7 +16,7 @@ def discover(dgram_port):
             if str(data, 'utf-8').startswith(MAGIC):
                 rc = str(data[len(MAGIC):], 'utf-8').split(':')
                 return rc[0], rc[1], int(rc[2])
-        except timeout:
+        except socket.timeout:
             print('Connection attempt timed out')
             return None, None, None
 
@@ -27,7 +27,7 @@ def run():
         print('Requested service not found on LAN')
         return
     print('Connecting to {} ({}:{})'.format(host, ip, port))
-    with socket(AF_INET, SOCK_STREAM) as s:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
             s.connect((host, port))
             s.recv(1024)  # discard 'HELLO'

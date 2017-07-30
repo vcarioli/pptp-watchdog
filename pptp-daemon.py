@@ -1,19 +1,20 @@
 #!/usr/bin/env /usr/bin/python3
+# pptp-daemon.py [port]
 
+import atexit
+import fcntl
 import os
 import resource
-import atexit
 import signal
+import socket
 import sys
-import fcntl
 
-from random import random
-from socket import socket, AF_INET, SOCK_STREAM, SOCK_DGRAM, SOL_SOCKET, SO_BROADCAST, gethostname
-from threading import Thread, Event
 from time import sleep
+from threading import Thread, Event
+from random import random
 
 MAGIC = "426e4973-a87c-46ca-b369-442e4cc50254"
-DGRAM_PORT = 56765
+BROADCAST_PORT = 56765
 
 HOST = ''  # Symbolic name meaning all available interfaces on localhost
 DEFAULT_PORT = 55555  # Arbitrary non-privileged port
@@ -36,34 +37,34 @@ def daemonize(pidfile=None):
 		except OSError as e:
 			raise Exception("%s [%d]".format(e.strerror, e.errno))
 		if pid == 0:
+			pf = None
+			if pidfile:
+				try:
+					pf = open(pidfile, 'w')
+					pf.write('{}\n'.format(os.getpid()))
+					pf.flush()
+					fcntl.lockf(pf.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+					atexit.register(lambda x: fcntl.lockf(x.fileno(), fcntl.LOCK_UN), pf)
+					atexit.register(lambda x: os.close(x.fileno()), pf)
+					atexit.register(lambda x: os.remove(x), pidfile)
+				except OSError:
+					print('\n{} is locked!\nAnother instance is already running, exiting!'.format(pidfile), )
+					sys.exit(1)
+
 			os.chdir("/")
 			os.umask(0)
-
-#			if pidfile:
-#				with open(pidfile, 'w') as pf:
-#					pf.write('{}\n'.format(os.getpid()))
 
 			# Iterate through and close all file descriptors.
 			for fd in range(0, resource.getrlimit(resource.RLIMIT_NOFILE)[1]):
 				try:
-					os.close(fd)
-				except OSError:  # ERROR, fd wasn't open to begin with (ignored)
+					if not pf or fd != pf.fileno():
+						os.close(fd)
+				except OSError:  # Ignore ERROR: fd wasn't open
 					pass
 
 			os.open(os.devnull, os.O_RDWR)  # Redirect stdin to /dev/null
-			# Duplicate stdin to stdout and stderr
-			os.dup2(0, 1)  # stdout (1)
-			os.dup2(0, 2)  # stderr (2)
-
-			if pidfile:
-				pf = open(pidfile, 'w')
-				pf.write('{}\n'.format(os.getpid()))
-				pf.flush()
-				fcntl.lockf(pf.fileno(), fcntl.LOCK_EX)
-
-				atexit.register(lambda x: fcntl.lockf(x.fileno(), fcntl.LOCK_UN), pf)
-				atexit.register(lambda x: os.close(x.fileno()), pf)
-				atexit.register(lambda x: os.remove(x), pidfile)
+			os.dup2(0, 1)  # Duplicate stdin to stdout (1)
+			os.dup2(0, 2)  # Duplicate stdin to stderr (2)
 
 			# return to main program
 			return 0
@@ -78,7 +79,7 @@ def daemonize(pidfile=None):
 
 def get_ip():
 	ip = '127.0.0.1'
-	with socket(AF_INET, SOCK_DGRAM) as s:
+	with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
 		try:
 			s.connect(('10.255.255.255', 1))
 			ip = s.getsockname()[0]
@@ -111,12 +112,12 @@ class AnnounceService(ServiceBase):
 
 	def run(self):
 		while not self.terminate():
-			with socket(AF_INET, SOCK_DGRAM) as s:  # create UDP socket as s:
+			with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
 				s.bind(('', 0))
-				s.setsockopt(SOL_SOCKET, SO_BROADCAST, 1)  # this is a broadcast socket
-				data = '{}{}:{}:{}'.format(MAGIC, gethostname(), get_ip(), self.port).encode('ascii')
-				s.sendto(data, ('<broadcast>', DGRAM_PORT))
-			sleep(random() * 2.5)
+				s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+				data = '{}{}:{}:{}'.format(MAGIC, socket.gethostname(), get_ip(), self.port).encode('ascii')
+				s.sendto(data, ('<broadcast>', BROADCAST_PORT))
+				sleep(random() * 2.5)
 
 
 class ListenerService(ServiceBase):
@@ -144,7 +145,7 @@ class ListenerService(ServiceBase):
 			self.client_sock.close()
 
 	def run(self):
-		with socket(AF_INET, SOCK_STREAM) as s:
+		with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 			try:
 				s.bind((self.host, self.port))
 			except Exception as ex:
@@ -184,10 +185,9 @@ def run(port):
 
 		# main control loop
 		while not terminate():
-			# keep main thread alive
-			sleep(random() * 2.0)
+			sleep(random() * 2.0)	# keep main thread alive
 	finally:
-		with socket(AF_INET, SOCK_STREAM) as s:
+		with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
 			try:
 				s.connect((get_ip(), port))
 			except Exception:
@@ -212,8 +212,10 @@ if __name__ == "__main__":
 
 	signal.signal(signal.SIGINT, sigint_handler)
 
-	print('{} (IP: {}) starts listening on port {}'.format(gethostname(), ip, server_port))
-
 	daemonize(PIDFILE)
+
+	#	print('{} (IP: {}) starts listening on port {}'.format(gethostname(), ip, server_port))
+	#	import syslog
+	#	syslog.syslog('{} (IP: {}) starts listening on port {}'.format(gethostname(), ip, server_port))
 
 	run(server_port)
