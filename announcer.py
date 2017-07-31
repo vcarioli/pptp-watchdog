@@ -87,7 +87,7 @@ def get_ip():
 	return ip
 
 
-def signal_handler(sig, frame):
+def sigtrap_handler(sig, frame):
 	shutdown_flag.set()
 
 
@@ -106,35 +106,65 @@ class AnnounceService(ServiceBase):
 		ServiceBase.__init__(self, port, shutdown_flag, 'announce_service')
 
 	def run(self):
-		while not self.terminate():
-			with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-				s.bind(('', BROADCAST_PORT))
-				data, _ = s.recvfrom(1024)  # wait for a packet
-				if str(data, 'utf-8').startswith(MAGIC):
-					rc = str(data[len(MAGIC):], 'utf-8').split(':')
-					data = '{}{}:{}:{}'.format(MAGIC, socket.gethostname(), get_ip(), self.port).encode('ascii')
-					s.sendto(data, (rc[2], BROADCAST_PORT))
-
-			sleep(random() * 0.5 + 0.5)
-
-def _run():
-	while not shutdown_flag.is_set():
 		with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-			s.bind(('', BROADCAST_PORT))
-			data, _ = s.recvfrom(1024)  # wait for a packet
-			if str(data, 'utf-8').startswith(MAGIC):
-				rc = str(data[len(MAGIC):], 'utf-8').split(':')
-				data = '{}{}:{}:{}'.format(MAGIC, socket.gethostname(), get_ip(), DEFAULT_PORT).encode('ascii')
-				s.sendto(data, (rc[2], BROADCAST_PORT))
+			s.bind(('', 0))
+			s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+			while not self.terminate():
+				data = '{}{}:{}:{}'.format(MAGIC, socket.gethostname(), get_ip(), self.port).encode('ascii')
+				s.sendto(data, ('<broadcast>', BROADCAST_PORT))
+				sleep(random() * 1.5)
 
-		sleep(random() * 0.5 + 0.5)
+
+def __run():  # for debug
+	with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+		while not shutdown_flag.is_set():
+			s.bind(('', BROADCAST_PORT))
+			s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+			data, addr = s.recvfrom(1024)  # wait for a packet
+			print('got: {} from ({}, {})', str(data[len(MAGIC):], 'utf-8'), *addr)
+			if str(data, 'utf-8').startswith(MAGIC):
+				data = '{}{}:{}:{}'.format(MAGIC, socket.gethostname(), get_ip(), DEFAULT_PORT).encode('ascii')
+				s.sendto(data, addr)
+
+			sleep(random() * 2.5)
+
+
+requests = 0
+sleep_time = 0.0
+
+
+def sigint_handler(sig, frame):
+	_sigtrap_handler(sig, frame)
+	sys.exit(0)
+
+
+def _sigtrap_handler(sig, frame):
+	global requests, sleep_time
+	print('\n{} dgrams sent\n{} seconds slept'.format(requests, sleep_time))
+
+
+def _run():  # for debug
+	global requests, sleep_time
+	signal.signal(signal.SIGTRAP, _sigtrap_handler)
+	signal.signal(signal.SIGINT, sigint_handler)
+
+	with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+		s.bind(('', 0))
+		s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+		while True:
+			data = '{}{}:{}:{}'.format(MAGIC, socket.gethostname(), get_ip(), DEFAULT_PORT).encode('ascii')
+			s.sendto(data, ('<broadcast>', BROADCAST_PORT))
+			requests += 1
+			t = random() * 5.0
+			sleep_time += t
+			sleep(t)
 
 
 def run():
 	terminate = lambda: shutdown_flag.is_set()
 
-	signal.signal(signal.SIGTERM, signal_handler)
-	signal.signal(signal.SIGINT, signal_handler)
+	#	signal.signal(signal.SIGTERM, signal_handler)
+	#	signal.signal(signal.SIGINT, signal_handler)
 
 	announcer_thread = AnnounceService(DEFAULT_PORT, shutdown_flag)
 	try:
@@ -142,16 +172,17 @@ def run():
 
 		# main control loop
 		while not terminate():
-#			_run()
 			sleep(random() * 5.0)  # keep main thread alive
 	finally:
-		sys.exit(0)
-
 		announcer_thread.join(5)
 
+
 if __name__ == "__main__":
-	PIDFILE = '/var/run/user/{}/announcer.pid'.format(os.getuid())
+	DEBUG = True
 
-	daemonize(PIDFILE)
-
-	run()
+	if not DEBUG:
+		PIDFILE = '/var/run/user/{}/announcer.pid'.format(os.getuid())
+		daemonize(PIDFILE)
+		run()
+	else:
+		_run()
