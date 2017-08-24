@@ -43,6 +43,55 @@ class DiscoverService:
 		return self.port
 
 
+class DiscoverService1:
+	def __init__(self, port, timeout_max=5.0, timeout_min=1.0):
+		self.port = port
+		self.hostname = socket.gethostname()
+		self.ip = get_ip()
+		self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+		self._sock.bind(('', 0))
+		self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+		self._sock.settimeout(timeout_min + random() * (timeout_max - timeout_min))
+		self.servers = {}
+
+	def __exit__(self, exc_type, exc_val, exc_tb):
+		pass
+
+	def __enter__(self):
+		return self
+
+	def announce(self):
+		data = '{}{}:{}:{}'.format(MAGIC, self.hostname, self.ip, self.port)
+		self._sock.sendto(data.encode('ascii'), ('<broadcast>', BROADCAST_PORT))
+
+	def discover(self):
+		try:
+			data = self._sock.recvfrom(BUF_SIZE)
+			ip, port = str(data[0], 'utf-8').split(':')
+			if not ip in self.servers:
+				self.servers[ip] = (ip, port)
+			return (ip, port)
+		except socket.timeout:
+			return (None, None)
+
+	def run(self):
+		self.announce()
+		self.discover()
+
+	def response(self):
+		return self.port
+
+
+def run1(server_port):
+	while True:
+		with DiscoverService1(server_port, timeout_max=5.0) as ds:
+			ds.announce()
+			server, port = ds.discover()
+			if server:
+				print('Server: {}:{}'.format(server, port))
+			else:
+				sleep(10 * random())
+
 def run(server_port):
 	with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
 		s.bind(('', 0))
@@ -76,4 +125,4 @@ if __name__ == "__main__":
 		except:
 			print('{}: bad port. Using default ({})'.format(sys.argv[1], server_port))
 
-	run(server_port)
+	run1(server_port)

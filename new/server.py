@@ -8,7 +8,8 @@ import threading
 
 from random import random
 
-MAGIC = "426e4973-a87c-46ca-b369-442e4cc50254"  # to make sure we don't confuse or get confused by other programs
+# To make sure we don't confuse or get confused by other programs
+MAGIC = "426e4973-a87c-46ca-b369-442e4cc50254"
 DGRAM_PORT = 56765  # The same port as used by the server
 
 DEFAULT_PORT = 55555  # Arbitrary non-privileged port
@@ -28,7 +29,7 @@ class AnnounceService:
 	def __init__(self, dgram_port):
 		self.dgram_port = dgram_port
 		self.clients = dict()
-		self.new_clients = False
+		self.new_client = False
 		self.client_data = ''
 		self.client_addr = ()
 
@@ -36,10 +37,16 @@ class AnnounceService:
 		host, ip, port = self.client_data.split(':')
 		if ip not in self.clients.keys():
 			self.clients[ip] = [host, ip, port]
-			self.new_clients = True
+			self.new_client = True
 
-	def discover(self):
-		self.new_clients = False
+	def __exit__(self, exc_type, exc_val, exc_tb):
+		pass
+
+	def __enter__(self):
+		return self
+
+	def listen(self):
+		self.new_client = False
 		self.client_data = ''
 		with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
 			s.bind(('', self.dgram_port))
@@ -57,23 +64,24 @@ class AnnounceService:
 			s.sendto(data, self.client_addr)
 
 	def run(self):
-		if self.discover():
+		if self.listen():
 			self._add_client()
-		if self.new_clients:
+		if self.new_client:
 			self.send_response()
 
 
 def run(dgram_port):
-	a = AnnounceService(dgram_port)
-	while True:
-		a.run()
-		if a.new_clients:
-			print()
-			for c in a.clients:
-				print('host: {}, IP: {}, port: {}'.format(*a.clients[c]))
-		else:
-			print('.', end='', flush=True)
-		time.sleep(random() * 1.5)
+	with AnnounceService(dgram_port) as a:
+		while True:
+			a.run()
+			if a.new_client:
+				print()
+				for c in a.clients:
+					print('host: {}, IP: {}, port: {}'.format(*a.clients[c]))
+			else:
+				print('New request from host {}'.format(a.client_data), end='\r', flush=True)
+#				print('.', end='', flush=True)
+			time.sleep(random() * 1.5)
 
 
 if __name__ == "__main__":
