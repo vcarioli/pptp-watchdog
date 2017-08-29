@@ -104,7 +104,7 @@ if __name__ == "__main__":
 	print("start")
 
 	with Daemon('daemon'):
-		print("\nsono un demone\n")
+		print("\nsono un demone\n")	# SE TUTTO FUNZIONA NON DOVREBBE ESSERE VISUALIZZATO
 		sleep(30)
 
 #	d = Daemon(lockfile='daemon', lockdir='/home/valerio')

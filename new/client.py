@@ -27,23 +27,7 @@ def get_ip():
 	return ip
 
 
-class DiscoverService:
-	def __init__(self, sock, port):
-		self.sock = sock
-		self.port = port
-		self.hostname = socket.gethostname()
-		self.ip = get_ip()
-		self.data = ''
-
-	def run(self):
-		self.data = '{}{}:{}:{}'.format(MAGIC, self.hostname, self.ip, self.port).encode('ascii')
-		self.sock.sendto(self.data, ('<broadcast>', BROADCAST_PORT))
-
-	def response(self):
-		return self.port
-
-
-class DiscoverService1:
+class ServiceDiscoverer:
 	def __init__(self, port, timeout_max=5.0, timeout_min=1.0):
 		self.port = port
 		self.hostname = socket.gethostname()
@@ -64,7 +48,7 @@ class DiscoverService1:
 		data = '{}{}:{}:{}'.format(MAGIC, self.hostname, self.ip, self.port)
 		self._sock.sendto(data.encode('ascii'), ('<broadcast>', BROADCAST_PORT))
 
-	def discover(self):
+	def detect(self):
 		try:
 			data = self._sock.recvfrom(BUF_SIZE)
 			ip, port = str(data[0], 'utf-8').split(':')
@@ -74,47 +58,23 @@ class DiscoverService1:
 		except socket.timeout:
 			return (None, None)
 
-	def run(self):
+	def discover(self):
 		self.announce()
-		self.discover()
-
-	def response(self):
-		return self.port
+		return self.detect()
 
 
-def run1(server_port):
-	while True:
-		with DiscoverService1(server_port, timeout_max=5.0) as ds:
-			ds.announce()
-			server, port = ds.discover()
-			if server:
-				print('Server: {}:{}'.format(server, port))
-			else:
-				sleep(10 * random())
-
-def run(server_port):
-	with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-		s.bind(('', 0))
-		s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-		a = DiscoverService(s, server_port)
-		while True:
-			a.run()
-			s.settimeout(random() * 10.0)
-			try:
-				data = s.recvfrom(BUF_SIZE)
-				ip, port = str(data[0], 'utf-8').split(':')
-				if ip in servers:
-					sleep(10)
-				else:
-					servers[ip] = (ip, port)
-					print('Server: {}:{}'.format(ip, port))
-			except socket.timeout:
-				sleep(10)
-				continue
-
-
-
+# ----------------------------------------------------------------------------------------------------------------------
 if __name__ == "__main__":
+	# ------------------------------------------------------------------------------------------------------------------
+	def run(server_port):
+		while True:
+			with ServiceDiscoverer(server_port, timeout_max=5.0) as sd:
+				server, port = sd.discover()
+				if server:
+					print('Server: {}:{}'.format(server, port))
+				else:
+					sleep(10 * random())
+	# ------------------------------------------------------------------------------------------------------------------
 
 	server_port = DEFAULT_PORT
 	ip = get_ip()
@@ -125,4 +85,4 @@ if __name__ == "__main__":
 		except:
 			print('{}: bad port. Using default ({})'.format(sys.argv[1], server_port))
 
-	run1(server_port)
+	run(server_port)

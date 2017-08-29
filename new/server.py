@@ -25,19 +25,19 @@ def get_ip():
 			pass
 	return ip
 
-class AnnounceService:
+class ServicePublisher:
 	def __init__(self, dgram_port):
 		self.dgram_port = dgram_port
 		self.clients = dict()
-		self.new_client = False
-		self.client_data = ''
-		self.client_addr = ()
+		self.client_data = []
+		self.client_addr = []
 
 	def _add_client(self):
-		host, ip, port = self.client_data.split(':')
+		host, ip, port = self.client_data
 		if ip not in self.clients.keys():
-			self.clients[ip] = [host, ip, port]
-			self.new_client = True
+			self.clients[ip] = (host, ip, port)
+			return True
+		return False
 
 	def __exit__(self, exc_type, exc_val, exc_tb):
 		pass
@@ -46,48 +46,48 @@ class AnnounceService:
 		return self
 
 	def listen(self):
-		self.new_client = False
-		self.client_data = ''
+		self.client_data = []
 		with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
 			s.bind(('', self.dgram_port))
 			data, self.client_addr = s.recvfrom(1024)  # wait for a packet
 			if str(data, 'utf-8').startswith(MAGIC):
-				self.client_data = str(data[len(MAGIC):], 'utf-8')
+				self.client_data = str(data[len(MAGIC):], 'utf-8').split(':')
 				return True
 			else:
 				return False
 
-	def	send_response(self):
+	def	reply(self):
 		with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
 			s.bind(('', self.dgram_port))
 			data = '{}:{}'.format(get_ip(), DEFAULT_PORT).encode('ascii')
 			s.sendto(data, self.client_addr)
 
-	def run(self):
-		if self.listen():
-			self._add_client()
-		if self.new_client:
-			self.send_response()
+	def publish(self):
+		if self.listen() and self._add_client():
+			self.reply()
+			return True
+		return False
 
 
-def run(dgram_port):
-	with AnnounceService(dgram_port) as a:
-		while True:
-			a.run()
-			if a.new_client:
-				print()
-				for c in a.clients:
-					print('host: {}, IP: {}, port: {}'.format(*a.clients[c]))
-			else:
-				print('New request from host {}'.format(a.client_data), end='\r', flush=True)
-#				print('.', end='', flush=True)
-			time.sleep(random() * 1.5)
-
-
+# ----------------------------------------------------------------------------------------------------------------------
 if __name__ == "__main__":
+	# ------------------------------------------------------------------------------------------------------------------
+	def run(dgram_port):
+		with ServicePublisher(dgram_port) as sp:
+			while True:
+				if sp.publish():
+					print()
+					print('host: {}, IP: {}, port: {}'.format(*sp.client_data))
+				else:
+					print('New request from {} ({}:{})'.format(*sp.client_data), end='\r', flush=True)
+				# print('.', end='', flush=True)
+				time.sleep(random() * 1.5)
+	# ------------------------------------------------------------------------------------------------------------------
+
 	try:
 		dgram_port = int(sys.argv[1]) if len(sys.argv) > 1 else DGRAM_PORT
 	except:
 		print("Invalid port {}! Using default({})".format(sys.argv[1], DGRAM_PORT))
 		dgram_port = DGRAM_PORT
+
 	run(dgram_port)
